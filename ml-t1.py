@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-نموذج ML-T1 الذكي المتقدم - بنية Transformer متقدمة
+نموذج ML-T1 الذكي المتقدم - بنية Transformer متقدمة (الإصدار المعدل)
 """
 
 import os
@@ -26,7 +26,6 @@ from tensorflow.keras.regularizers import l2
 from sklearn.model_selection import train_test_split
 import arabic_reshaper
 from bidi.algorithm import get_display
-from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
 import tensorflow_text as tf_text
 
 # تفعيل وضع الأداء العالي
@@ -135,7 +134,7 @@ def prepare_tokenizer(sentences):
     print(f"🔤 حجم القاموس: {vocab_size}")
     return tokenizer, vocab_size
 
-# 4. طبقات Transformer المتقدمة
+# 4. طبقات Transformer المتقدمة (معدلة)
 class TransformerBlock(tf.keras.layers.Layer):
     def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
         super(TransformerBlock, self).__init__()
@@ -149,7 +148,8 @@ class TransformerBlock(tf.keras.layers.Layer):
         self.dropout1 = Dropout(rate)
         self.dropout2 = Dropout(rate)
 
-    def call(self, inputs, training):
+    # التصحيح: إضافة قيمة افتراضية لـ training
+    def call(self, inputs, training=False):
         attn_output = self.att(inputs, inputs)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(inputs + attn_output)
@@ -170,16 +170,18 @@ class TokenAndPositionEmbedding(tf.keras.layers.Layer):
         x = self.token_emb(x)
         return x + positions
 
-# 5. بناء نموذج Transformer متقدم
+# 5. بناء نموذج Transformer متقدم (معدل)
 def build_transformer_model(vocab_size, max_len):
     """بناء نموذج Transformer متقدم"""
     inputs = Input(shape=(max_len,))
     embedding_layer = TokenAndPositionEmbedding(max_len, vocab_size, EMBEDDING_DIM)
     x = embedding_layer(inputs)
     
-    # طبقات Transformer
+    # طبقات Transformer (معدلة)
     for _ in range(NUM_LAYERS):
-        x = TransformerBlock(EMBEDDING_DIM, NUM_HEADS, FF_DIM)(x)
+        # التصحيح: تمرير وسيط training صريح
+        transformer_block = TransformerBlock(EMBEDDING_DIM, NUM_HEADS, FF_DIM)
+        x = transformer_block(x, training=False)
     
     # طبقة تجميع نهائية
     x = GlobalAveragePooling1D()(x)
@@ -312,7 +314,7 @@ def generate_advanced_text(seed_text, next_words, model, tokenizer, max_seq_len,
     bidi_text = get_display(reshaped_text)
     return bidi_text
 
-# 8. التدريب الرئيسي
+# 8. التدريب الرئيسي (معدل)
 def main():
     # تحميل وتجهيز البيانات
     print("🔥 إعداد أقوى نموذج للغة العربية")
@@ -406,12 +408,12 @@ def main():
         if user_input.lower() in ["خروج", "exit", "quit"]:
             print("✨ انتهى البرنامج. إلى اللقاء!")
             break
-        
+            
         user_input = preprocess_text(user_input)
         if not user_input or len(user_input.split()) < 2:
             print("❌ الرجاء إدخال نص عربي صالح (كلمتين على الأقل)")
             continue
-        
+            
         generated = generate_advanced_text(
             user_input, 
             25, 
@@ -426,6 +428,9 @@ if __name__ == "__main__":
     # إعدادات لتحسين الأداء
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '1'
     os.environ['OMP_NUM_THREADS'] = str(os.cpu_count())
+    
+    # حل مشكلة CUDA (اختياري)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # تعطيل GPU
     
     # تشغيل التدريب
     main()
