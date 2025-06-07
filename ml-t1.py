@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-نموذج ML-T1 المتقدم - إصدار مصحح
+نموذج ML-T1 المتقدم - ذكاء اصطناعي عالي الأداء
+تم تصميمه للتعامل مع كميات كبيرة من البيانات والتفكير العميق
 """
 
 import os
 import re
 import pickle
 import numpy as np
+import multiprocessing
 from datasets import load_dataset
 import tensorflow as tf
 from tensorflow.keras.preprocessing.text import Tokenizer
@@ -16,10 +18,11 @@ from tensorflow.keras.layers import (
     Embedding, Bidirectional, LSTM, Dense, 
     Dropout, LayerNormalization
 )
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.optimizers import AdamW
 from tensorflow.keras.callbacks import (
     ModelCheckpoint, EarlyStopping, 
-    ReduceLROnPlateau
+    ReduceLROnPlateau, TensorBoard
 )
 from sklearn.model_selection import train_test_split
 import arabic_reshaper
@@ -28,73 +31,78 @@ from bidi.algorithm import get_display
 # تفعيل وضع الأداء العالي
 tf.config.optimizer.set_jit(True)
 tf.config.run_functions_eagerly(True)
+tf.data.experimental.enable_debug_mode()
 
 # 1. إعداد المعلمات الأساسية
-MODEL_NAME = "ML-T1-Fixed"
+MODEL_NAME = "ML-T1-Advanced"
 MODEL_FILE = f"{MODEL_NAME}.h5"
 TOKENIZER_FILE = f"{MODEL_NAME}_tokenizer.pkl"
+LOG_DIR = f"{MODEL_NAME}_logs"
 
-# معلمات النموذج (حسب طلبك)
+# معلمات النموذج
 MAX_SEQUENCE_LEN = 15  # طول السياق
-EMBEDDING_DIM = 128    # أبعاد التضمين
-LSTM_UNITS = 128       # وحدات LSTM
-DENSE_UNITS = 256      # وحدات الطبقة الكثيفة
-BATCH_SIZE = 128       # حجم الدُفعة
-EPOCHS = 10            # عدد العصور
-VOCAB_LIMIT = 30000    # الحد الأقصى للمفردات
-SAMPLE_SIZE = 1000     # عدد الجمل للتدريب
+EMBEDDING_DIM = 256    # أبعاد التضمين
+LSTM_UNITS = 512       # وحدات LSTM
+DENSE_UNITS = 1024     # وحدات الطبقة الكثيفة
+BATCH_SIZE = 2048      # حجم الدُفعة
+EPOCHS = 50            # عدد العصور
+VOCAB_LIMIT = 50000    # الحد الأقصى للمفردات
 
 # 2. تحميل وتجهيز البيانات
 def load_and_preprocess_data():
     """تحميل وتنظيف البيانات"""
-    print("🚀 جاري تحميل البيانات...")
-    try:
-        # استخدام بيانات تجريبية أصغر
-        texts = [
-            "العلم نور والجهل ظلام",
-            "التعليم في الصغر كالنقش على الحجر",
-            "اللغة العربية هي لغة الضاد",
-            "التكنولوجيا تغير العالم بسرعة",
-            "الذكاء الاصطناعي مستقبل البشرية",
-            "القراءة توسع آفاق الإنسان",
-            "التاريخ يعلمنا دروساً قيمة",
-            "الفلسفة تساعدنا على فهم الوجود",
-            "الرياضيات لغة الكون",
-            "الإبداع هو جوهر التقدم"
-        ] * 100  # تكرار لإنشاء 1000 جملة
-        print("✅ تم إنشاء بيانات تجريبية (1000 جملة)")
-        return texts
-    except Exception as e:
-        print(f"❌ خطأ في تحميل البيانات: {e}")
-        return []
+    print("🚀 جاري تحميل بيانات Wiki40B (العربية)...")
+    dataset = load_dataset("wiki40b", "ar", split="train")
+    texts = dataset["text"][:100000]  # 100,000 مقالة
+    
+    # معالجة متوازية
+    print("🧹 جاري تنظيف النصوص (متوازي)...")
+    with multiprocessing.Pool() as pool:
+        cleaned_texts = pool.map(preprocess_text, texts)
+    
+    # تقسيم إلى جمل
+    print("🔢 جاري تقسيم النص إلى جمل...")
+    sentences = []
+    for text in cleaned_texts:
+        parts = re.split(r"[\.؟!\n]", text)
+        for part in parts:
+            if part.strip():
+                sentences.append(part.strip())
+    
+    print(f"✅ تم تحميل وتجهيز {len(sentences)} جملة")
+    return sentences
 
 def preprocess_text(text: str) -> str:
     """تنظيف النص العربي"""
-    if not isinstance(text, str):
-        return ""
     # إزالة التشكيل والحروف غير العربية
     text = re.sub(r'[\u064B-\u065F]', '', text)  # إزالة التشكيل
     text = re.sub(r'[^\u0600-\u06FF\s]', ' ', text)  # إبقاء العربية والمسافات
     text = re.sub(r'\s+', ' ', text).strip()  # إزالة المسافات الزائدة
     return text
 
-# 3. تجهيز Tokenizer (النسخة المصححة)
+# 3. تجهيز Tokenizer
 def prepare_tokenizer(sentences):
-    """إنشاء Tokenizer جديد مع ضبط حجم المفردات"""
-    print("🔄 جاري إنشاء Tokenizer جديد...")
-    tokenizer = Tokenizer(num_words=VOCAB_LIMIT, oov_token="<OOV>")
-    tokenizer.fit_on_texts(sentences)
-    
-    # حفظ Tokenizer
-    with open(TOKENIZER_FILE, "wb") as f:
-        pickle.dump(tokenizer, f)
+    """إنشاء أو تحميل Tokenizer"""
+    if os.path.exists(TOKENIZER_FILE):
+        with open(TOKENIZER_FILE, "rb") as f:
+            tokenizer = pickle.load(f)
+        print(f"✅ تم تحميل Tokenizer من: {TOKENIZER_FILE}")
+    else:
+        tokenizer = Tokenizer(num_words=VOCAB_LIMIT, oov_token="<OOV>")
+        tokenizer.fit_on_texts(sentences)
+        
+        # حفظ Tokenizer
+        with open(TOKENIZER_FILE, "wb") as f:
+            pickle.dump(tokenizer, f)
+        print(f"✅ تم إنشاء وحفظ Tokenizer في: {TOKENIZER_FILE}")
     
     vocab_size = min(len(tokenizer.word_index) + 1, VOCAB_LIMIT)
     print(f"🔤 حجم القاموس: {vocab_size}")
     return tokenizer, vocab_size
 
-# 4. مولد البيانات المتقدم (النسخة المصححة)
+# 4. مولد البيانات المتقدم
 class AdvancedDataGenerator(tf.keras.utils.Sequence):
+    """مولد بيانات متقدم للتعامل مع مجموعات البيانات الكبيرة"""
     def __init__(self, sentences, tokenizer, max_seq_len, batch_size, shuffle=True):
         self.sentences = sentences
         self.tokenizer = tokenizer
@@ -112,50 +120,50 @@ class AdvancedDataGenerator(tf.keras.utils.Sequence):
         X, y = [], []
         
         for sentence in batch_sentences:
-            if not sentence:
-                continue
             tokens = self.tokenizer.texts_to_sequences([sentence])[0]
-            
-            # تأكيد أن جميع الرموز ضمن النطاق الصحيح
-            tokens = [t if t < self.vocab_size else 1 for t in tokens]  # 1 = <OOV>
-            
             for i in range(1, len(tokens)):
                 start_idx = max(0, i - self.max_seq_len + 1)
                 seq = tokens[start_idx:i+1]
-                if len(seq) < 2:
-                    continue
                 padded_seq = pad_sequences([seq], maxlen=self.max_seq_len, padding='pre')[0]
                 X.append(padded_seq[:-1])
                 y.append(padded_seq[-1])
         
-        if len(X) == 0:
-            return np.zeros((1, self.max_seq_len-1)), np.zeros((1,))
-        
-        return np.array(X), np.array(y)
+        return np.array(X), to_categorical(y, num_classes=self.vocab_size)
     
     def on_epoch_end(self):
         if self.shuffle:
             np.random.shuffle(self.sentences)
 
-# 5. بناء النموذج المتقدم (النسخة المصححة)
+# 5. بناء النموذج المتقدم
 def build_advanced_model(vocab_size, max_seq_len):
-    model = Sequential(name=MODEL_NAME)
+    """بناء نموذج ML-T1 المتقدم"""
+    model = Sequential(name="ML-T1-Advanced")
     
-    # طبقة التضمين مع تأكيد حجم المفردات
+    # طبقة التضمين
     model.add(Embedding(
         input_dim=vocab_size,
         output_dim=EMBEDDING_DIM,
+        input_length=max_seq_len - 1,
         mask_zero=True
     ))
     
-    model.add(Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)))
+    # طبقات LSTM ثنائية الاتجاه
+    model.add(Bidirectional(LSTM(
+        LSTM_UNITS, 
+        return_sequences=True,
+        kernel_regularizer=tf.keras.regularizers.l2(0.001)
+    ))
     model.add(LayerNormalization())
     model.add(Dropout(0.3))
     
-    model.add(Bidirectional(LSTM(LSTM_UNITS // 2)))
+    model.add(Bidirectional(LSTM(
+        LSTM_UNITS // 2,
+        kernel_regularizer=tf.keras.regularizers.l2(0.001))
+    ))
     model.add(LayerNormalization())
     model.add(Dropout(0.3))
     
+    # طبقات كثيفة
     model.add(Dense(DENSE_UNITS, activation='relu'))
     model.add(LayerNormalization())
     model.add(Dropout(0.4))
@@ -163,119 +171,170 @@ def build_advanced_model(vocab_size, max_seq_len):
     model.add(Dense(DENSE_UNITS // 2, activation='relu'))
     model.add(LayerNormalization())
     
+    # طبقة الإخراج
     model.add(Dense(vocab_size, activation='softmax'))
     
-    optimizer = Adam(learning_rate=0.001, clipnorm=1.0)
+    # المترجم مع جدولة معدل التعلم
+    optimizer = AdamW(
+        learning_rate=0.001,
+        weight_decay=0.0001,
+        clipnorm=1.0
+    )
     
     model.compile(
-        loss='sparse_categorical_crossentropy',
+        loss='categorical_crossentropy',
         optimizer=optimizer,
         metrics=['accuracy']
     )
     
-    model.build((None, max_seq_len-1))
     model.summary()
     return model
 
 # 6. نظام توليد النص المتقدم
 def generate_deep_text(seed_text, next_words, model, tokenizer, max_seq_len, temperature=0.7):
-    if not seed_text:
-        return ""
-    
+    """توليد نص عميق مع التحكم في الإبداع"""
     output = seed_text
+    reshaped_output = arabic_reshaper.reshape(seed_text)
+    bidi_output = get_display(reshaped_output)
+    print(f"🌱 البذرة: {bidi_output}")
     
-    for _ in range(next_words):
+    for i in range(next_words):
         token_list = tokenizer.texts_to_sequences([output])[0]
-        
-        # تأكيد أن جميع الرموز ضمن النطاق الصحيح
-        token_list = [t if t < model.input_shape[-1] else 1 for t in tokenizer.texts_to_sequences([output])[0]]
-        
         token_list = pad_sequences([token_list], maxlen=max_seq_len-1, padding='pre')
         
+        # التنبؤ مع تحكم في درجة الحرارة
         predictions = model.predict(token_list, verbose=0)[0]
         predictions = np.log(predictions) / max(temperature, 0.1)
         exp_preds = np.exp(predictions)
         probs = exp_preds / np.sum(exp_preds)
         
+        # أخذ عينة مع مرجحة الاحتمالات
         predicted_idx = np.random.choice(len(probs), p=probs)
         predicted_word = tokenizer.index_word.get(predicted_idx, "")
         
+        # التوقف عند علامات النهاية
         if not predicted_word or predicted_word == "<OOV>":
             break
             
         output += " " + predicted_word
         
-        if predicted_word in [".", "؟", "!"]:
+        # إيقاف عند نهاية الجملة
+        if predicted_word in [".", "؟", "!"] and i > next_words//2:
             break
             
+    # تشكيل النص العربي للعرض
     reshaped_text = arabic_reshaper.reshape(output)
-    return get_display(reshaped_text)
+    bidi_text = get_display(reshaped_text)
+    return bidi_text
 
-# 7. التدريب الرئيسي (النسخة المصححة)
+# 7. التدريب الرئيسي
 def main():
-    print("⚠️ التدريب على CPU (يوصى باستخدام GPU للأداء الأمثل)")
+    # تهيئة بيئة التدريب
+    strategy = tf.distribute.MirroredStrategy() if tf.config.list_physical_devices('GPU') else None
     
-    # تحميل وتجهيز البيانات
-    texts = load_and_preprocess_data()
-    if not texts:
-        print("❌ فشل في تحميل البيانات")
-        return
-    
-    sentences = []
-    for text in texts:
-        cleaned = preprocess_text(text)
-        if cleaned:
-            sentences.append(cleaned)
-    
-    # استخدام فقط العدد المطلوب من الجمل
-    sentences = sentences[:SAMPLE_SIZE]
-    print(f"✅ عدد الجمل المستخدمة: {len(sentences)}")
-    
-    # إنشاء Tokenizer جديد دائماً
-    tokenizer, vocab_size = prepare_tokenizer(sentences)
-    
-    # بناء النموذج
-    model = build_advanced_model(vocab_size, MAX_SEQUENCE_LEN)
+    if strategy:
+        print(f"🚀 تم الكشف عن {strategy.num_replicas_in_sync} GPUs")
+        global BATCH_SIZE
+        BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
+        with strategy.scope():
+            sentences = load_and_preprocess_data()
+            tokenizer, vocab_size = prepare_tokenizer(sentences)
+            model = build_advanced_model(vocab_size, MAX_SEQUENCE_LEN)
+    else:
+        print("⚠️ التدريب على CPU (يوصى باستخدام GPU للأداء الأمثل)")
+        sentences = load_and_preprocess_data()
+        tokenizer, vocab_size = prepare_tokenizer(sentences)
+        model = build_advanced_model(vocab_size, MAX_SEQUENCE_LEN)
     
     # تقسيم البيانات
-    train_sents, val_sents = train_test_split(sentences, test_size=0.1, random_state=42)
+    train_sents, val_sents = train_test_split(
+        sentences, test_size=0.1, random_state=42
+    )
     
     # إنشاء مولدات البيانات
-    train_generator = AdvancedDataGenerator(train_sents, tokenizer, MAX_SEQUENCE_LEN, BATCH_SIZE)
-    val_generator = AdvancedDataGenerator(val_sents, tokenizer, MAX_SEQUENCE_LEN, BATCH_SIZE, shuffle=False)
+    train_generator = AdvancedDataGenerator(
+        train_sents, tokenizer, MAX_SEQUENCE_LEN, BATCH_SIZE
+    )
+    
+    val_generator = AdvancedDataGenerator(
+        val_sents, tokenizer, MAX_SEQUENCE_LEN, BATCH_SIZE, shuffle=False
+    )
     
     # إعداد نظام المراقبة
     callbacks = [
-        ModelCheckpoint(MODEL_FILE, save_best_only=True, monitor='val_accuracy', mode='max', verbose=1),
-        EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True, verbose=1),
-        ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=1, min_lr=1e-6, verbose=1)
+        ModelCheckpoint(
+            filepath=MODEL_FILE,
+            save_best_only=True,
+            monitor='val_accuracy',
+            mode='max',
+            save_weights_only=False,
+            verbose=1
+        ),
+        EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.2,
+            patience=3,
+            min_lr=1e-6,
+            verbose=1
+        ),
+        TensorBoard(
+            log_dir=LOG_DIR,
+            histogram_freq=1,
+            profile_batch='10,15'
+        )
     ]
     
     # التدريب
-    print("\n🔥 بدء تدريب النموذج")
+    print("\n🔥 بدء تدريب ML-T1 المتقدم (قد يستغرق ساعات إلى أيام)")
     history = model.fit(
         train_generator,
         epochs=EPOCHS,
         validation_data=val_generator,
         callbacks=callbacks,
-        verbose=1
+        workers=multiprocessing.cpu_count(),
+        use_multiprocessing=True
     )
     
-    # اختبار النموذج
-    print("\n🎯 اختبار النموذج بعد التدريب:")
-    test_seeds = ["العلم هو", "التكنولوجيا", "الذكاء الاصطناعي"]
+    # اختبار النموذج بعد التدريب
+    print("\n🎯 تم الانتهاء من التدريب! جاري اختبار النموذج...")
+    test_seeds = [
+        "العلم هو أساس",
+        "التكنولوجيا الحديثة تساهم في",
+        "الفلسفة تبحث عن",
+        "الذكاء الاصطناعي سوف"
+    ]
+    
     for seed in test_seeds:
-        generated = generate_deep_text(seed, 8, model, tokenizer, MAX_SEQUENCE_LEN)
-        print(f"\nالبذرة: {seed}\nالإكمال: {generated}")
+        generated = generate_deep_text(
+            seed, 20, model, tokenizer, MAX_SEQUENCE_LEN, temperature=0.8
+        )
+        print(f"\n🌱 البذرة: {get_display(arabic_reshaper.reshape(seed))}")
+        print(f"🧠 إبداع ML-T1:\n{generated}")
+        print("─" * 50)
     
     # الواجهة التفاعلية
-    print("\n🤖 جاهز للتجربة! أدخل 'خروج' للإنهاء")
+    print("\n🤖 نموذج ML-T1 جاهز للتجربة! أدخل 'خروج' للخروج.")
     while True:
-        user_input = input("> ").strip()
-        if user_input.lower() in ["خروج", "exit", "quit"]:
+        seed = input("\n> ").strip()
+        if seed.lower() in ["خروج", "exit", "quit"]:
+            print("✨ انتهى البرنامج. إلى اللقاء!")
             break
-        generated = generate_deep_text(user_input, 10, model, tokenizer, MAX_SEQUENCE_LEN)
-        print(f"الإكمال: {generated}\n")
+        
+        seed = preprocess_text(seed)
+        if not seed:
+            print("❌ الرجاء إدخال نص عربي صالح.")
+            continue
+        
+        generated = generate_deep_text(
+            seed, 15, model, tokenizer, MAX_SEQUENCE_LEN, temperature=0.7
+        )
+        print(f"\n🧠 إبداع ML-T1:\n{generated}")
 
 if __name__ == "__main__":
     main()
