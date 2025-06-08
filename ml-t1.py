@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-نموذج ML-T1 الذكي المتقدم - بنية Transformer متقدمة (الإصدار المعدل)
+نموذج ML-T1 الذكي المتقدم - تدريب تدريجي مع مراحل متعددة
 """
 
 import os
@@ -14,8 +14,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import (
     Input, Embedding, LayerNormalization, Dense,
-    Dropout, MultiHeadAttention, GlobalAveragePooling1D,
-    Bidirectional, LSTM
+    Dropout, MultiHeadAttention, GlobalAveragePooling1D
 )
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import (
@@ -26,7 +25,7 @@ from tensorflow.keras.regularizers import l2
 from sklearn.model_selection import train_test_split
 import arabic_reshaper
 from bidi.algorithm import get_display
-import tensorflow_text as tf_text
+import gc  # لأداء تنظيف الذاكرة
 
 # تفعيل وضع الأداء العالي
 tf.config.optimizer.set_jit(True)
@@ -38,24 +37,31 @@ MODEL_FILE = f"{MODEL_NAME}.h5"
 TOKENIZER_FILE = f"{MODEL_NAME}_tokenizer.pkl"
 LOG_DIR = f"{MODEL_NAME}_logs"
 
-# معلمات النموذج المتقدم
-MAX_SEQUENCE_LEN = 64  # زيادة طول السياق
-EMBEDDING_DIM = 512    # زيادة أبعاد التضمين
-NUM_HEADS = 8           # عدد رؤوس الاهتمام
-FF_DIM = 1024           # وحدات الشبكة العصبية الأمامية
-NUM_LAYERS = 8          # عدد طبقات الـ Transformer
-BATCH_SIZE = 64         # حجم الدُفعة
-EPOCHS = 50             # عدد العصور
-VOCAB_LIMIT = 50000     # الحد الأقصى للمفردات
-SAMPLE_SIZE = 100000    # زيادة عدد الجمل للتدريب
+# معلمات النموذج المتقدم (مخفّضة للذاكرة)
+MAX_SEQUENCE_LEN = 48  # تقليل طول السياق
+EMBEDDING_DIM = 256    # تقليل أبعاد التضمين
+NUM_HEADS = 4           # تقليل رؤوس الاهتمام
+FF_DIM = 512            # تقليل وحدات الشبكة العصبية الأمامية
+NUM_LAYERS = 4          # تقليل طبقات الـ Transformer
+BATCH_SIZE = 32         # تقليل حجم الدُفعة
+VOCAB_LIMIT = 30000     # تقليل الحد الأقصى للمفردات
 
-# 2. تحميل وتجهيز البيانات
+# 2. مراحل التدريب التدريجي
+TRAINING_STAGES = [
+    {"name": "المرحلة 1: الأساسيات", "sample_size": 1000, "epochs": 10, "max_len": 32},
+    {"name": "المرحلة 2: بناء المفردات", "sample_size": 5000, "epochs": 15, "max_len": 40},
+    {"name": "المرحلة 3: التفكير المنطقي", "sample_size": 20000, "epochs": 20, "max_len": 48},
+    {"name": "المرحلة 4: الإتقان المتقدم", "sample_size": 50000, "epochs": 25, "max_len": 48},
+    {"name": "المرحلة 5: الإبداع والتميز", "sample_size": 100000, "epochs": 30, "max_len": 48}
+]
+
+# 3. تحميل وتجهيز البيانات
 def load_and_preprocess_data():
     """تحميل وتنظيف البيانات"""
     print("🚀 جاري تحميل بيانات ويكيبيديا العربية...")
     try:
         dataset = load_dataset("wiki40b", "ar", split="train")
-        texts = dataset["text"][:100000]  # 100,000 مقالة
+        texts = dataset["text"]
         print("✅ تم تحميل بيانات ويكيبيديا العربية")
         return texts
     except Exception as e:
@@ -63,7 +69,7 @@ def load_and_preprocess_data():
         print("⚡ جاري تحميل بيانات بديلة...")
         try:
             dataset = load_dataset("arabic_billion_words", split="train")
-            texts = dataset["text"][:100000]
+            texts = dataset["text"]
             return texts
         except:
             print("⚠️ فشل في تحميل البيانات، جاري استخدام بيانات تجريبية")
@@ -115,7 +121,7 @@ def preprocess_text(text: str) -> str:
     
     return text
 
-# 3. تجهيز Tokenizer
+# 4. تجهيز Tokenizer
 def prepare_tokenizer(sentences):
     """إنشاء Tokenizer متقدم"""
     print("🔄 جاري إنشاء Tokenizer جديد...")
@@ -134,7 +140,7 @@ def prepare_tokenizer(sentences):
     print(f"🔤 حجم القاموس: {vocab_size}")
     return tokenizer, vocab_size
 
-# 4. طبقات Transformer المتقدمة (معدلة)
+# 5. طبقات Transformer المتقدمة (معدلة)
 class TransformerBlock(tf.keras.layers.Layer):
     def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
         super(TransformerBlock, self).__init__()
@@ -148,7 +154,6 @@ class TransformerBlock(tf.keras.layers.Layer):
         self.dropout1 = Dropout(rate)
         self.dropout2 = Dropout(rate)
 
-    # التصحيح: إضافة قيمة افتراضية لـ training
     def call(self, inputs, training=False):
         attn_output = self.att(inputs, inputs)
         attn_output = self.dropout1(attn_output, training=training)
@@ -170,7 +175,7 @@ class TokenAndPositionEmbedding(tf.keras.layers.Layer):
         x = self.token_emb(x)
         return x + positions
 
-# 5. بناء نموذج Transformer متقدم (معدل)
+# 6. بناء نموذج Transformer متقدم (معدل)
 def build_transformer_model(vocab_size, max_len):
     """بناء نموذج Transformer متقدم"""
     inputs = Input(shape=(max_len,))
@@ -179,7 +184,6 @@ def build_transformer_model(vocab_size, max_len):
     
     # طبقات Transformer (معدلة)
     for _ in range(NUM_LAYERS):
-        # التصحيح: تمرير وسيط training صريح
         transformer_block = TransformerBlock(EMBEDDING_DIM, NUM_HEADS, FF_DIM)
         x = transformer_block(x, training=False)
     
@@ -218,7 +222,7 @@ def build_transformer_model(vocab_size, max_len):
     model.summary()
     return model
 
-# 6. مولد البيانات المتقدم
+# 7. مولد البيانات المتقدم
 class AdvancedDataGenerator(tf.keras.utils.Sequence):
     def __init__(self, sentences, tokenizer, max_seq_len, batch_size, shuffle=True):
         self.sentences = sentences
@@ -264,16 +268,13 @@ class AdvancedDataGenerator(tf.keras.utils.Sequence):
         if self.shuffle:
             np.random.shuffle(self.sentences)
 
-# 7. نظام توليد النص المتقدم
+# 8. نظام توليد النص المتقدم
 def generate_advanced_text(seed_text, next_words, model, tokenizer, max_seq_len, temperature=0.7):
     """توليد نص متقدم باستخدام تقنيات متطورة"""
     if not seed_text:
         return ""
     
     output = seed_text
-    reshaped_output = arabic_reshaper.reshape(seed_text)
-    bidi_output = get_display(reshaped_output)
-    print(f"🌱 البذرة: {bidi_output}")
     
     for _ in range(next_words):
         # تحضير التسلسل
@@ -314,37 +315,29 @@ def generate_advanced_text(seed_text, next_words, model, tokenizer, max_seq_len,
     bidi_text = get_display(reshaped_text)
     return bidi_text
 
-# 8. التدريب الرئيسي (معدل)
+# 9. التدريب الرئيسي مع مراحل متعددة
 def main():
     # تحميل وتجهيز البيانات
-    print("🔥 إعداد أقوى نموذج للغة العربية")
-    texts = load_and_preprocess_data()
+    print("🔥 إعداد أقوى نموذج للغة العربية مع تدريب تدريجي")
+    all_texts = load_and_preprocess_data()
     
-    # تنظيف النصوص
-    sentences = []
-    for text in texts:
+    # تنظيف جميع النصوص
+    all_sentences = []
+    for text in all_texts:
         cleaned = preprocess_text(text)
         if cleaned and len(cleaned.split()) > 2:  # تجاهل الجمل القصيرة جداً
-            sentences.append(cleaned)
+            all_sentences.append(cleaned)
+    print(f"✅ إجمالي الجمل المتاحة: {len(all_sentences)}")
     
-    # استخدام العدد المطلوب من الجمل
-    sentences = sentences[:SAMPLE_SIZE]
-    print(f"✅ عدد الجمل المستخدمة: {len(sentences)}")
+    # إنشاء Tokenizer من مجموعة بيانات أولية
+    initial_sample = min(10000, len(all_sentences))
+    initial_sentences = all_sentences[:initial_sample]
+    tokenizer, vocab_size = prepare_tokenizer(initial_sentences)
     
-    # إنشاء Tokenizer
-    tokenizer, vocab_size = prepare_tokenizer(sentences)
-    
-    # بناء النموذج
+    # بناء النموذج الأساسي
     model = build_transformer_model(vocab_size, MAX_SEQUENCE_LEN)
     
-    # تقسيم البيانات
-    train_sents, val_sents = train_test_split(sentences, test_size=0.1, random_state=42)
-    
-    # إنشاء مولدات البيانات
-    train_generator = AdvancedDataGenerator(train_sents, tokenizer, MAX_SEQUENCE_LEN, BATCH_SIZE)
-    val_generator = AdvancedDataGenerator(val_sents, tokenizer, MAX_SEQUENCE_LEN, BATCH_SIZE, shuffle=False)
-    
-    # إعداد نظام المراقبة
+    # نظام المراقبة
     callbacks = [
         ModelCheckpoint(
             MODEL_FILE, 
@@ -369,37 +362,63 @@ def main():
         ),
         TensorBoard(
             log_dir=LOG_DIR,
-            histogram_freq=1,
-            profile_batch='10,15'
+            histogram_freq=1
         )
     ]
     
-    # التدريب
-    print("\n🚀 بدء تدريب النموذج المتقدم (قد يستغرق وقتاً طويلاً)")
-    history = model.fit(
-        train_generator,
-        epochs=EPOCHS,
-        validation_data=val_generator,
-        callbacks=callbacks,
-        verbose=1
-    )
-    
-    # اختبار النموذج
-    print("\n🎯 اختبار النموذج بعد التدريب:")
-    test_seeds = [
-        "العلم هو أساس",
-        "التكنولوجيا الحديثة",
-        "الذكاء الاصطناعي",
-        "مستقبل التعليم",
-        "الثورة الصناعية الرابعة"
-    ]
-    
-    for seed in test_seeds:
-        generated = generate_advanced_text(seed, 20, model, tokenizer, MAX_SEQUENCE_LEN, temperature=0.8)
-        reshaped_seed = arabic_reshaper.reshape(seed)
-        print(f"\n🌱 البذرة: {get_display(reshaped_seed)}")
-        print(f"🧠 إبداع ML-T1:\n{generated}")
-        print("─" * 70)
+    # التدريب على مراحل متعددة
+    for stage in TRAINING_STAGES:
+        print(f"\n{'='*70}")
+        print(f"🚀 {stage['name']}")
+        print(f"📊 حجم العينة: {stage['sample_size']} جملة")
+        print(f"⏳ العصور: {stage['epochs']}")
+        print(f"📏 الطول الأقصى: {stage['max_len']}")
+        print(f"{'='*70}")
+        
+        # اختيار عينة من الجمل لهذه المرحلة
+        sample_size = min(stage['sample_size'], len(all_sentences))
+        stage_sentences = all_sentences[:sample_size]
+        
+        # تنظيف الذاكرة
+        gc.collect()
+        
+        # تقسيم البيانات لهذه المرحلة
+        train_sents, val_sents = train_test_split(stage_sentences, test_size=0.1, random_state=42)
+        
+        # إنشاء مولدات البيانات
+        train_generator = AdvancedDataGenerator(
+            train_sents, tokenizer, stage['max_len'], BATCH_SIZE
+        )
+        val_generator = AdvancedDataGenerator(
+            val_sents, tokenizer, stage['max_len'], BATCH_SIZE, shuffle=False
+        )
+        
+        # التدريب على هذه المرحلة
+        history = model.fit(
+            train_generator,
+            epochs=stage['epochs'],
+            validation_data=val_generator,
+            callbacks=callbacks,
+            verbose=1
+        )
+        
+        # اختبار النموذج بعد كل مرحلة
+        print("\n🎯 اختبار النموذج بعد هذه المرحلة:")
+        test_seeds = [
+            "العلم هو أساس",
+            "التكنولوجيا الحديثة",
+            "الذكاء الاصطناعي",
+            "مستقبل التعليم"
+        ]
+        
+        for seed in test_seeds:
+            generated = generate_advanced_text(
+                seed, 20, model, tokenizer, stage['max_len'], temperature=0.7
+            )
+            reshaped_seed = arabic_reshaper.reshape(seed)
+            print(f"\n🌱 البذرة: {get_display(reshaped_seed)}")
+            print(f"🧠 إبداع ML-T1:\n{generated}")
+            print("─" * 70)
     
     # الواجهة التفاعلية المتقدمة
     print("\n🤖 نموذج ML-T1 جاهز للتجربة! أدخل 'خروج' للإنهاء")
