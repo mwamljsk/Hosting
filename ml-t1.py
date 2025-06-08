@@ -38,7 +38,7 @@ TOKENIZER_FILE = f"{MODEL_NAME}_tokenizer.pkl"
 LOG_DIR = f"{MODEL_NAME}_logs"
 
 # معلمات النموذج المتقدم (مخفّضة للذاكرة)
-MAX_SEQUENCE_LEN = 48  # تقليل طول السياق
+MAX_SEQUENCE_LEN = 48  # استخدام طول ثابت لجميع المراحل
 EMBEDDING_DIM = 256    # تقليل أبعاد التضمين
 NUM_HEADS = 4           # تقليل رؤوس الاهتمام
 FF_DIM = 512            # تقليل وحدات الشبكة العصبية الأمامية
@@ -46,13 +46,13 @@ NUM_LAYERS = 4          # تقليل طبقات الـ Transformer
 BATCH_SIZE = 32         # تقليل حجم الدُفعة
 VOCAB_LIMIT = 30000     # تقليل الحد الأقصى للمفردات
 
-# 2. مراحل التدريب التدريجي
+# 2. مراحل التدريب التدريجي (إزالة max_len)
 TRAINING_STAGES = [
-    {"name": "المرحلة 1: الأساسيات", "sample_size": 1000, "epochs": 10, "max_len": 32},
-    {"name": "المرحلة 2: بناء المفردات", "sample_size": 5000, "epochs": 15, "max_len": 40},
-    {"name": "المرحلة 3: التفكير المنطقي", "sample_size": 20000, "epochs": 20, "max_len": 48},
-    {"name": "المرحلة 4: الإتقان المتقدم", "sample_size": 50000, "epochs": 25, "max_len": 48},
-    {"name": "المرحلة 5: الإبداع والتميز", "sample_size": 100000, "epochs": 30, "max_len": 48}
+    {"name": "المرحلة 1: الأساسيات", "sample_size": 1000, "epochs": 10},
+    {"name": "المرحلة 2: بناء المفردات", "sample_size": 5000, "epochs": 15},
+    {"name": "المرحلة 3: التفكير المنطقي", "sample_size": 20000, "epochs": 20},
+    {"name": "المرحلة 4: الإتقان المتقدم", "sample_size": 50000, "epochs": 25},
+    {"name": "المرحلة 5: الإبداع والتميز", "sample_size": 100000, "epochs": 30}
 ]
 
 # 3. تحميل وتجهيز البيانات
@@ -176,10 +176,10 @@ class TokenAndPositionEmbedding(tf.keras.layers.Layer):
         return x + positions
 
 # 6. بناء نموذج Transformer متقدم (معدل)
-def build_transformer_model(vocab_size, max_len):
+def build_transformer_model(vocab_size):
     """بناء نموذج Transformer متقدم"""
-    inputs = Input(shape=(max_len,))
-    embedding_layer = TokenAndPositionEmbedding(max_len, vocab_size, EMBEDDING_DIM)
+    inputs = Input(shape=(MAX_SEQUENCE_LEN,))
+    embedding_layer = TokenAndPositionEmbedding(MAX_SEQUENCE_LEN, vocab_size, EMBEDDING_DIM)
     x = embedding_layer(inputs)
     
     # طبقات Transformer (معدلة)
@@ -224,10 +224,10 @@ def build_transformer_model(vocab_size, max_len):
 
 # 7. مولد البيانات المتقدم
 class AdvancedDataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, sentences, tokenizer, max_seq_len, batch_size, shuffle=True):
+    def __init__(self, sentences, tokenizer, batch_size, shuffle=True, **kwargs):
+        super().__init__(**kwargs)  # حل مشكلة التحذير
         self.sentences = sentences
         self.tokenizer = tokenizer
-        self.max_seq_len = max_seq_len
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.vocab_size = min(len(tokenizer.word_index) + 1, VOCAB_LIMIT)
@@ -249,18 +249,18 @@ class AdvancedDataGenerator(tf.keras.utils.Sequence):
             
             # إنشاء عينات متعددة من الجملة
             for i in range(1, len(tokens)):
-                start_idx = max(0, i - self.max_seq_len)
+                start_idx = max(0, i - MAX_SEQUENCE_LEN)
                 seq = tokens[start_idx:i+1]
                 
                 if len(seq) < 2:
                     continue
                     
-                padded_seq = pad_sequences([seq], maxlen=self.max_seq_len+1, padding='pre')[0]
+                padded_seq = pad_sequences([seq], maxlen=MAX_SEQUENCE_LEN+1, padding='pre')[0]
                 X.append(padded_seq[:-1])
                 y.append(padded_seq[-1])
         
         if len(X) == 0:
-            return np.zeros((1, self.max_seq_len)), np.zeros((1,))
+            return np.zeros((1, MAX_SEQUENCE_LEN)), np.zeros((1,))
         
         return np.array(X), np.array(y)
     
@@ -269,7 +269,7 @@ class AdvancedDataGenerator(tf.keras.utils.Sequence):
             np.random.shuffle(self.sentences)
 
 # 8. نظام توليد النص المتقدم
-def generate_advanced_text(seed_text, next_words, model, tokenizer, max_seq_len, temperature=0.7):
+def generate_advanced_text(seed_text, next_words, model, tokenizer, temperature=0.7):
     """توليد نص متقدم باستخدام تقنيات متطورة"""
     if not seed_text:
         return ""
@@ -285,8 +285,8 @@ def generate_advanced_text(seed_text, next_words, model, tokenizer, max_seq_len,
             token_list = [1]  # <OOV>
             
         # اقتصار التسلسل على الطول المسموح
-        token_list = token_list[-max_seq_len:]
-        token_list = pad_sequences([token_list], maxlen=max_seq_len, padding='pre')
+        token_list = token_list[-MAX_SEQUENCE_LEN:]
+        token_list = pad_sequences([token_list], maxlen=MAX_SEQUENCE_LEN, padding='pre')
         
         # التنبؤ
         predictions = model.predict(token_list, verbose=0)[0]
@@ -335,7 +335,7 @@ def main():
     tokenizer, vocab_size = prepare_tokenizer(initial_sentences)
     
     # بناء النموذج الأساسي
-    model = build_transformer_model(vocab_size, MAX_SEQUENCE_LEN)
+    model = build_transformer_model(vocab_size)
     
     # نظام المراقبة
     callbacks = [
@@ -372,7 +372,6 @@ def main():
         print(f"🚀 {stage['name']}")
         print(f"📊 حجم العينة: {stage['sample_size']} جملة")
         print(f"⏳ العصور: {stage['epochs']}")
-        print(f"📏 الطول الأقصى: {stage['max_len']}")
         print(f"{'='*70}")
         
         # اختيار عينة من الجمل لهذه المرحلة
@@ -387,10 +386,10 @@ def main():
         
         # إنشاء مولدات البيانات
         train_generator = AdvancedDataGenerator(
-            train_sents, tokenizer, stage['max_len'], BATCH_SIZE
+            train_sents, tokenizer, BATCH_SIZE
         )
         val_generator = AdvancedDataGenerator(
-            val_sents, tokenizer, stage['max_len'], BATCH_SIZE, shuffle=False
+            val_sents, tokenizer, BATCH_SIZE, shuffle=False
         )
         
         # التدريب على هذه المرحلة
@@ -413,7 +412,7 @@ def main():
         
         for seed in test_seeds:
             generated = generate_advanced_text(
-                seed, 20, model, tokenizer, stage['max_len'], temperature=0.7
+                seed, 20, model, tokenizer, temperature=0.7
             )
             reshaped_seed = arabic_reshaper.reshape(seed)
             print(f"\n🌱 البذرة: {get_display(reshaped_seed)}")
@@ -437,8 +436,7 @@ def main():
             user_input, 
             25, 
             model, 
-            tokenizer, 
-            MAX_SEQUENCE_LEN,
+            tokenizer,
             temperature=0.7
         )
         print(f"\n🧠 إبداع ML-T1:\n{generated}")
@@ -447,9 +445,6 @@ if __name__ == "__main__":
     # إعدادات لتحسين الأداء
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '1'
     os.environ['OMP_NUM_THREADS'] = str(os.cpu_count())
-    
-    # حل مشكلة CUDA (اختياري)
-    # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # تعطيل GPU
     
     # تشغيل التدريب
     main()
