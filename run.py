@@ -24,17 +24,17 @@ class PositionalEncoding(Layer):
         self.embed_dim = embed_dim
         self.pos_encoding = self.positional_encoding(maxlen, embed_dim)
 
-    def get_angles(self, position, i, embed_dim):
-        angles = 1 / tf.pow(10000.0, (2 * (i // 2)) / tf.cast(embed_dim, tf.float32)
-        return position * angles
-
     def positional_encoding(self, maxlen, embed_dim):
-        angle_rads = self.get_angles(
-            position=tf.range(maxlen, dtype=tf.float32)[:, tf.newaxis],
-            i=tf.range(embed_dim, dtype=tf.float32)[tf.newaxis, :],
-            embed_dim=embed_dim
+        position = tf.range(maxlen, dtype=tf.float32)[:, tf.newaxis]
+        i = tf.range(embed_dim, dtype=tf.float32)[tf.newaxis, :]
+        
+        # حساب الزوايا بشكل صحيح
+        angle_rads = position * tf.pow(
+            10000.0, 
+            - (2 * (i // 2)) / tf.cast(embed_dim, tf.float32)
         )
         
+        # تطبيق الجيب على المؤشرات الزوجية وجيب التمام على الفردية
         sines = tf.math.sin(angle_rads[:, 0::2])
         cosines = tf.math.cos(angle_rads[:, 1::2])
         
