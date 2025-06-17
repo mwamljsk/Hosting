@@ -10,11 +10,9 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Embedding, LayerNormalization, Dense, Dropout, MultiHeadAttention, GlobalAveragePooling1D
 
 # إعدادات الأداء المتقدم
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-tf.get_logger().setLevel('ERROR')
-tf.config.threading.set_intra_op_parallelism_threads(4)  # استخدام جميع الأنوية
-tf.config.threading.set_inter_op_parallelism_threads(4)
-tf.config.optimization.set_jit(True)  # تفعيل XLA لتسريع الحسابات
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # تعطيل معظم سجلات TensorFlow
+os.environ['OMP_NUM_THREADS'] = '4'  # استخدام جميع الأنوية
+tf.get_logger().setLevel('ERROR')  # تعطيل تحذيرات TensorFlow
 
 # إعدادات النموذج
 MODEL_NAME = "ML-T1-Advanced"
@@ -138,7 +136,7 @@ def generate_text(seed_text, next_words, model, tokenizer, temperature=0.7):
             [token_sequence], maxlen=MAX_SEQUENCE_LEN, padding='pre'
         )
         
-        # التنبؤ (باستخدام XLA المسرع)
+        # التنبؤ
         predictions = model.predict(padded_sequence, verbose=0)[0]
         
         # أخذ عينة من التوزيع
