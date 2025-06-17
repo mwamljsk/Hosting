@@ -14,6 +14,10 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # تعطيل معظم سجلات Tenso
 os.environ['OMP_NUM_THREADS'] = '4'  # استخدام جميع الأنوية
 tf.get_logger().setLevel('ERROR')  # تعطيل تحذيرات TensorFlow
 
+# ضبط التوازي للاستفادة من الأنوية الأربعة
+tf.config.threading.set_intra_op_parallelism_threads(4)
+tf.config.threading.set_inter_op_parallelism_threads(4)
+
 # إعدادات النموذج
 MODEL_NAME = "ML-T1-Advanced"
 MODEL_FILE = f"{MODEL_NAME}.h5"
